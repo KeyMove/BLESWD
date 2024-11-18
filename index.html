@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<style>
+    *{
+        margin: 0;
+        padding: 0;
+    }
+</style>
+<body>
+    <button id="opencom" onclick="openble()">打开串口</button>
+    <button id="opencom" onclick="testswd()">测试SWD</button>
+    <div contenteditable="true" id="output"></div>
+</body>
+<script>
+    class DataHelper{
+        constructor(val=null){
+            this.data=val?val:[];
+            this.rpos=0;
+            this.LE=true;
+        }
+        w32(v){
+            if(this.LE){
+                this.data.push((v>>0)&0xff);
+                this.data.push((v>>8)&0xff);
+                this.data.push((v>>16)&0xff);
+                this.data.push((v>>24)&0xff);
+            }
+            else{
+                this.data.push((v>>24)&0xff);
+                this.data.push((v>>16)&0xff);
+                this.data.push((v>>8)&0xff);
+                this.data.push((v>>0)&0xff);
+            }
+            return this;
+        }
+        w16(v){
+            if(this.LE){
+                this.data.push((v>>0)&0xff);
+                this.data.push((v>>8)&0xff);
+            }
+            else{
+                this.data.push((v>>8)&0xff);
+                this.data.push((v>>0)&0xff);
+            }
+            return this;
+        }
+        w8(v){
+            this.data.push(v&0xff);
+            return this;
+        }
+        align(pos){
+            while(this.data.length<pos)this.data.push(0);
+            return this;
+        }
+        wbuff(buff){
+            buff.forEach(e=>this.data.push(e));
+            return this;
+        }
+
+        bytes(){
+            return this.data;
+        }
+
+
+        r8(){
+            return this.data[this.rpos++];
+        }
+        r16(){
+            let v=0;
+            if(this.LE){
+                v=this.data[this.rpos++];
+                v|=this.data[this.rpos++]<<8;
+            }
+            else{
+                v=this.data[this.rpos++]<<8;
+                v|=this.data[this.rpos++];
+            }
+            return v;
+        }
+        r32(){
+            let v=0;
+            if(this.LE){
+                v=this.data[this.rpos++];
+                v|=this.data[this.rpos++]<<8;
+                v|=this.data[this.rpos++]<<16;
+                v|=this.data[this.rpos++]<<24;
+            }
+            else{
+                v=this.data[this.rpos++]<<24;
+                v|=this.data[this.rpos++]<<16;
+                v|=this.data[this.rpos++]<<8;
+                v|=this.data[this.rpos++];
+            }
+            return v;
+        }
+        rbuff(len){
+            let v=[];
+            while(len--)v.push(this.data[this.rpos++]);
+            return v;
+        }
+        rappend(v,len){
+            while(len--)v.push(this.data[this.rpos++]);
+            return v;
+        }
+        rskip(len){
+            this.rpos+=len;
+            return this;
+        }
+        
+    }
+</script>
+<script>
+    class BLEUART{
+        constructor(statschange=null,onrecvdata,filters=0xfff0,readservice=0xfff1,writeservice=0xfff2){
+            if(!('bluetooth' in navigator))return;
+            this.OnstatusChange=statschange?statschange:()=>{};
+            this.OnReceiveData=onrecvdata?onrecvdata:()=>{};
+            
+            this.Sender=null;
+            this.deviceName='';
+            this.device=null;
+            this.connected=false;
+            this.Service=null;
+            this.buffer=[];
+            this.logs=[];
+            this.filters=filters;
+            this.readservice=readservice;
+            this.writeservice=writeservice;
+
+            this.rxReqCount=1;
+            this.rxPromise=null;
+            this.rxPromiseresolve=null;
+            this.rxPromisereject=null;
+            this.rxPromisecallback=null;
+            this.timer=setInterval(() => {
+                if(this.buffer.length>=this.rxReqCount)
+                {
+                    this.OnReceiveData(this.buffer);
+                    if(this.rxPromise){
+                        if(this.buffer.length>=this.rxReqCount){
+                            const buff=this.buffer.splice(0,this.rxReqCount);
+                            this.rxPromiseresolve(this.rxPromisecallback(buff));
+                            this.rxPromise=null;
+                        }
+                    }
+                }
+            }, 1);
+        }
+        log(obj){
+            this.logs.push(obj.toString());
+        }
+        open(){
+            try{
+                navigator.bluetooth.requestDevice({ filters: [{ services: [this.filters] }] })
+                .then(device => {
+                    this.log('Connecting...');
+                    this.deviceName = device.name;
+                    this.device = device;
+                    device.addEventListener('gattserverdisconnected', (event) => {
+                        //connectButton.textContent = '连接蓝牙设备';
+                        this.OnstatusChange(this,false);
+                        this.connected=false;
+                    });
+                    return this.device.gatt.connect();
+                })
+                .then(server => {
+                    this.log('Getting Service...');
+                    return server.getPrimaryService(this.filters);
+                })
+                .then(service => {
+                    this.Service = service;
+                    this.log('Getting Characteristic...');
+                    //return service.requestMtu(250);
+                    return service.getCharacteristic(this.readservice);
+                })
+                .then(characteristic => {
+                    //myCharacteristic = characteristic;
+                    return characteristic.startNotifications().then(_ => {
+                        this.log('> Notifications started');
+                        this.log("Connected to: " + this.deviceName);
+                        characteristic.addEventListener('characteristicvaluechanged',
+                            (event) => {
+                                this.buffer.push(...new Uint8Array(event.target.value.buffer));
+                                if(this.buffer.length>=this.rxReqCount)
+                                {
+                                    this.OnReceiveData(this.buffer);
+                                    if(this.rxPromise){
+                                        if(this.buffer.length>=this.rxReqCount){
+                                            const buff=this.buffer.splice(0,this.rxReqCount);
+                                            this.rxPromiseresolve(this.rxPromisecallback(buff));
+                                            this.rxPromise=null;
+                                        }
+                                    }
+                                }
+                                else
+                                    this.OnReceiveData(this.buffer);
+                            });
+                    });
+                })
+                .then(_ => {
+                    return this.Service.getCharacteristic(this.writeservice);
+                })
+                .then(sender => {
+                    this.log('> get Sender');
+                    this.Sender = sender;
+                    this.OnstatusChange(this,true);
+                    this.connected=true;
+                    //connectButton.textContent = '断开蓝牙设备';
+                })
+                .catch(error => {
+                    this.log('蓝牙连接错误:' + error);
+                });
+            }
+            catch(error){
+                this.log('蓝牙连接错误:' + error);
+            }
+        }
+        close(){
+            try{
+                this.device.gatt.disconnect();
+            }catch(error){
+                log(`error:${error.toString()}`);
+            }
+        }
+        sendBytes(v){
+            if(!this.Sender)return;
+            return this.Sender.writeValue(new Uint8Array(v));
+        }
+        waitBytes(nbytes=46,call=()=>{}){
+            this.rxReqCount=nbytes;
+            if(this.rxPromise)this.rxPromisereject();
+            this.rxPromise = new Promise((resolve, reject) => {
+                this.rxPromiseresolve=resolve;
+                this.rxPromisereject=reject;
+            });
+            this.rxPromisecallback=call;
+            return this.rxPromise;
+        }
+    }
+</script>
+<script>
+
+    class UARTSWDDevice{
+        constructor(COM){
+            this.COM=COM;
+            this.data=[];
+            this.Parity=0;
+            this.rate=0xfc;
+
+            this.lastInt=0;
+            this.lastData=[];
+
+            this.rcache=[];
+            this.wcache=[];
+            this.coreID=0;
+            for (let i = 0; i < 46; i++) {
+                this.rcache.push(255);
+                this.wcache.push(255);
+            }
+            this.brInt=(r)=>{
+                for (let i = 0; i < 8; i++) {
+                    if (r & 1) this.rcache[i]=0xff;
+                    else this.rcache[i]=0xf0;
+                    r >>= 1;
+                }
+                return this.rcache;
+            }
+            this.rInt=(r)=>{
+                return this.COM.sendBytes(this.brInt(r));
+            }
+            this.bwInt=(r,v)=>{
+                for (let i = 0; i < 8; i++) {
+                    if (r & 1) this.wcache[i]=0xff;
+                    else this.wcache[i]=0xf0;
+                    r >>= 1;
+                }
+                let addr = 0;
+                for (let i = 13; i < 45; i++) {
+                    if (v & 1) this.wcache[i]=0xff;
+                    else this.wcache[i]=0xf0;
+                    addr += v;
+                    v >>>= 1;
+                }
+                this.wcache[45] = (addr&1) ? 0xff : 0xf0;
+                return this.wcache;
+            }
+            this.wInt=(r,v)=>{
+                return this.COM.sendBytes(this.bwInt(r,v));
+            }
+        }
+        w8(v, data) {
+            data = data ? data : this.data;
+            for (let i = 0; i < 8; i++) {
+                if (v & 1) data.push(255);
+                else data.push(240);
+                v >>= 1;
+            }
+        }
+        w32(v, data) {
+            data = data ? data : this.data;
+            let addr = 0;
+            for (let i = 0; i < 32; i++) {
+                if (v & 1) data.push(255);
+                else data.push(240);
+                addr += v;
+                v >>>= 1;
+            }
+            return addr;
+        }
+
+        rst(){
+            this.data.length=0;
+            this.w32(0xffffffff);
+            this.w32(0xffffffff);
+            this.w8(0x9e);
+            this.w8(0xe7);
+            this.w32(0xffffffff);
+            this.w32(0xffffffff);
+            this.data.push(...[0xf0, 0xf0]);
+            this.w8(0xa5);
+            this.data.push(...[255, 255, 255]);
+            this.w32(0xffffffff);
+            this.data.push(...[255, 255, 255]);
+            return this.COM.sendBytes(this.data)
+            .then(e=>this.COM.waitBytes(192,(b)=>(this.lastInt=this.readInt(b))));
+        }
+
+        wBus(addr,value){
+            return this.wInt(addr,value)
+            .then(e=>this.COM.waitBytes(46,(b)=>(this.lastInt=this.readInt(this.lastData=b))));
+        }
+
+        rBus(addr){
+            return this.rInt(addr)
+            .then(e=>this.COM.waitBytes(46,(b)=>(this.lastInt=this.readInt(this.lastData=b))));
+        }
+
+        WriteData(addr,data){
+            this.data.length=0;
+            this.data.push(...this.bwInt(0x8b,addr));
+            this.data.push(...this.bwInt(0xbb,data));
+            this.data.push(...this.brInt(0xbd));
+            return this.COM.sendBytes(this.data)
+            .then(e=>this.COM.waitBytes(46*3,(b)=>(this.lastInt=this.readInt(this.lastData=b))));
+            
+            return this.wBus(0x8b,addr)
+            .then(e=>this.wBus(0xbb,data))
+            .then(e=>this.rBus(0xbd));
+        }
+
+        ReadData(addr){
+            this.data.length=0;
+            this.data.push(...this.bwInt(0x8b,addr));
+            this.data.push(...this.brInt(0x9f));
+            this.data.push(...this.brInt(0xbd));
+            return this.COM.sendBytes(this.data)
+            .then(e=>this.COM.waitBytes(46*3,(b)=>(this.lastInt=this.readInt(this.lastData=b))));
+
+            return this.wBus(0x8b,addr)
+            .then(e=>this.rBus(0x9f))
+            .then(e=>this.rBus(0xbd));
+        }
+
+        Go(){
+            return this.WriteData(0xE000EDF0,0xA05F0001);
+        }
+
+        Halt(){
+            return this.WriteData(0xE000EDF0,0xA05F0003);
+        }
+
+        isHalt(){
+            return this.ReadData(0xE000EDF0)
+            .then(e=>((e&0x00020000)!=0));
+        }
+
+        WriteReg(reg,value){
+            return this.WriteData(0xE000EDF8,value)
+            .then(e=>this.WriteData(0xE000EDF4,reg|0x10000))
+        }
+
+        ReadReg(reg){
+            return this.WriteData(0xE000EDF4,reg)
+            .then(e=>this.ReadData(0xE000EDF8))
+        }
+
+        connect(){
+            return this.rst()
+            .then(e=>{
+                this.coreID=e;
+                this.rate = (this.lastData[190]<252||this.lastData[189]<252) && 248 || 252;
+                return this.wBus(0x81,0x1e)})
+            .then(e=>this.wBus(0xb1,0))
+            .then(e=>this.wBus(0xA9,0x50000000))
+            .then(e=>this.rBus(0x8D))
+            .then(e=>this.rBus(0x8D))
+            .then(e=>this.rBus(0x8D))
+            .then(e=>this.wBus(0xb1,0))
+            .then(e=>this.wBus(0xa3,0x23000012))
+            .then(e=>this.rBus(0x8D))
+            .then(e=>this.Go())
+        }
+
+        softReset(){
+            return this.Halt()
+            .then(e=>this.WriteData(0xE000EDFC,1))
+            .then(e=>this.ReadData(0xE000EDF0))
+            .then(e=>this.WriteData(0xE000ED0C,0x05fa0004))
+            .then(e=>this.WriteReg(16,0x01000000))
+            .then(e=>this.WriteData(0xE000EDFC,(1 << 24)))
+        }
+
+        writeMem32(addr,data){
+            let r=new DataHelper(data);
+            return this.wBus(0x8B,addr)
+            .then(e=>{
+                let len=(data.length+3)>>>2;
+                let p=waitBytes(46*len);
+                for (let i = 0; i < len; i++){
+                    this.wInt(0xBB,r.r32());
+                }
+                return p;
+            })
+            .then(e=>rBus(0xBD));
+        }
+
+        readMem32(addr,length){
+            return wBus(0x8B,addr)
+            .then(e=>rBus(0x9F))
+            .then(e=>{
+                let len=(length+3)>>>2;
+                let p=waitBytes(46*len);
+                for (let i = 0; i < len; i++)
+                    rInt(0x9F);
+                return p;
+            })
+            .then(e=>readInts(e,(length+3)>>>2));
+
+        }
+
+
+        async AllReg(){
+            let regs=[];
+            for (let i = 0; i < 21; i++) {
+                let val= await this.ReadReg(i);
+                regs.push(val);
+            }
+            return regs;
+        }
+
+        async viewregs(){
+            let str=[];
+            for (let i = 0; i < 17; i++) {
+                let v=await this.ReadReg(i);
+                if(i<13){
+                    let r=`R`+i;
+                    if(i<10)r+=' '
+                    str.push(`${r} = 0x${Hex32(v)}\r\n`);
+                }
+                else{
+                    switch(i){
+                        case 13:str.push(`SP  = 0x${Hex32(v)}\r\n`);break;
+                        case 14:str.push(`LR  = 0x${Hex32(v)}\r\n`);break;
+                        case 15:str.push(`PC  = 0x${Hex32(v)}\r\n`);break;
+                        case 16:str.push(`xPSR= 0x${Hex32(v)}\r\n`);break;
+                    }
+                }
+            }
+            return str.join('');
+        }
+
+        _rInt(addr){
+            this.w8(addr);
+            this.data.push(...[255, 255, 255]);
+            this.w32(0xffffffff);
+            this.data.push(...[255, 255, 255]);
+            return this.writeData(this.data);
+        }
+
+        _wInt(addr,value){
+            this.w8(addr);
+            this.data.push(...[255, 255, 255, 255, 255]);
+            if(this.w32(0xffffffff))
+                this.data.push(255);
+            else
+                this.data.push(240);
+            return this.writeData(this.data);
+        }
+        
+
+        readInt(data) {
+            data = data ? data : this.data;
+            if (data.length < 35) return;
+            let index = data.length - 35;
+            let value = 0;
+            const r=this.rate;
+            for (let i = 0; i < 32; i++) {
+                value >>>= 1;
+                if (data[index + i] > r) value |= 0x80000000;
+            }
+            return value;
+        }
+
+    }
+
+    function w32(v, data) {
+        data = data ? data : [];
+        let addr = 0;
+        for (let i = 0; i < 32; i++) {
+            if (v & 1) data.push(255);
+            else data.push(240);
+            addr += v;
+            v >>>= 1;
+        }
+        //return COM.sendBytes(data);
+        //return addr;
+    }
+    function w8(v, data) {
+        data = data ? data : [];
+        for (let i = 0; i < 8; i++) {
+            if (v & 1) data.push(255);
+            else data.push(240);
+            v >>= 1;
+        }
+        //return COM.sendBytes(data);
+    }
+    var pwmrate = 252;
+    function readInt(data) {
+        data = data ? data : recvdata;
+        if (data.length < 35) return;
+        let index = data.length - 35;
+        let value = 0;
+        for (let i = 0; i < 32; i++) {
+            value >>>= 1;
+            if (data[index + i] > pwmrate) value |= 0x80000000;
+        }
+        return value;
+    }
+    function toHex(v) {
+        let hex;
+        if ((v & 0xf) < 10) hex = String.fromCharCode(48 + (v & 0xf));
+        else hex = String.fromCharCode(65 + (v & 0xf) - 10);
+        v >>>= 4;
+        if ((v & 0xf) < 10) hex = String.fromCharCode(48 + (v & 0xf)) + hex;
+        else hex = String.fromCharCode(65 + (v & 0xf) - 10) + hex;
+        return hex;
+    }
+    function toHex32(v) {
+        return toHex((v >>> 24) & 0xff) + toHex((v >>> 16) & 0xff) + toHex((v >>> 8) & 0xff) + toHex(v & 0xff);
+    }
+    function padHex(value) {
+        return ('00' + value.toString(16).toUpperCase()).slice(-2);
+    }
+    function Hex8(value) {
+        return ('0' + value.toString(16).toUpperCase()).slice(-2);
+    }
+    function Hex16(value) {
+        return ('000' + value.toString(16).toUpperCase()).slice(-4);
+    }
+    function Hex32(value) {
+        return Hex16((value>>16)&0xffff)+Hex16(value&0xffff);
+    }
+    function init() {
+        let clks = [];
+        w32(0xffffffff, clks);
+        w32(0xffffffff, clks);
+        w8(0x9e, clks);
+        w8(0xe7, clks);
+        w32(0xffffffff, clks);
+        w32(0xffffffff, clks);
+        clks.push(...[240, 240]);
+        //let rst=clks;
+
+        //clks=[];
+        w8(0xa5, clks);
+        clks.push(...[255, 255, 255]);
+        w32(0xffffffff, clks);
+        clks.push(...[255, 255, 255]);
+
+        COM.sendBytes(clks)
+    }
+</script>
+<script>
+    var bt=document.getElementById('opencom');
+    var output=document.getElementById('output');
+    var COM=new BLEUART((com,b)=>{
+        if(b)
+            bt.innerText='断开串口';
+        else
+            bt.innerText='打开串口';
+    });
+    var SWD=new UARTSWDDevice(COM);
+
+    function openble(){
+        if(COM.connected)
+            COM.close();
+        else
+            COM.open();
+    }
+
+    async function runtime(call) {
+        const startTime = performance.now();
+        await call();
+        const endTime = performance.now();
+        const executionTime = endTime - startTime;
+        output.innerText+=(`Promise executed in ${executionTime.toFixed(2)} milliseconds\r\n`);
+    }
+
+    async function testswd() {
+        await runtime(async()=>{return SWD.connect()});
+        output.innerText+=`coreID:${Hex32(SWD.coreID)}\r\n`;
+        await runtime(async()=>{return SWD.softReset()});
+        output.innerText+=`isHalt:${Hex32(await SWD.isHalt())}\r\n`;
+        await runtime(async()=>{return output.innerText+=(await SWD.viewregs())});
+    }
+
+</script>
+</html>
