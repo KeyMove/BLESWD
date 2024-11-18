@@ -22,6 +22,7 @@
 <body>
     <button id="opencom" onclick="openble()">打开串口</button>
     <button id="opencom" onclick="testswd()">测试SWD</button>
+    <input type="text" id="maxpacket" value="4" style="height: 50px;">
     <div contenteditable="true" id="output"></div>
 </body>
 <script>
@@ -269,6 +270,7 @@
             this.wcache=[];
             this.coreID=0;
             this.transRate=0;
+            this.packetsize=4;
             for (let i = 0; i < 46; i++) {
                 this.rcache.push(255);
                 this.wcache.push(255);
@@ -437,9 +439,12 @@
                     if(r.rpos<r.data.length){
                         this.data.length=0;
                         this.data.push(...this.bwInt(0xBB,r.r32()));
-                        if(r.rpos<r.data.length)this.data.push(...this.bwInt(0xBB,r.r32()));
-                        if(r.rpos<r.data.length)this.data.push(...this.bwInt(0xBB,r.r32()));
-                        //if(r.rpos<r.data.length)this.data.push(...this.bwInt(0xBB,r.r32()));
+                        if(r.rpos<r.data.length&&this.packetsize>1)this.data.push(...this.bwInt(0xBB,r.r32()));
+                        if(r.rpos<r.data.length&&this.packetsize>2)this.data.push(...this.bwInt(0xBB,r.r32()));
+                        if(r.rpos<r.data.length&&this.packetsize>3)this.data.push(...this.bwInt(0xBB,r.r32()));
+                        if(r.rpos<r.data.length&&this.packetsize>4)this.data.push(...this.bwInt(0xBB,r.r32()));
+                        if(r.rpos<r.data.length&&this.packetsize>5)this.data.push(...this.bwInt(0xBB,r.r32()));
+                        if(r.rpos<r.data.length&&this.packetsize>6)this.data.push(...this.bwInt(0xBB,r.r32()));
                         //console.log(`rpos:${r.rpos} : size:${this.data.length}`);
                         this.transRate=r.rpos/r.data.length;
                         return this.COM.sendBytes(this.data).then(_=>write());
@@ -465,9 +470,12 @@
                     if(count<len){
                         this.data.length=0;
                         this.data.push(...bytes);count++;
-                        if(count<len){this.data.push(...bytes);count++;}
-                        if(count<len){this.data.push(...bytes);count++;}
-                        //if(count<len){this.data.push(...bytes);count++;}
+                        if(count<len&&this.packetsize>1){this.data.push(...bytes);count++;}
+                        if(count<len&&this.packetsize>2){this.data.push(...bytes);count++;}
+                        if(count<len&&this.packetsize>3){this.data.push(...bytes);count++;}
+                        if(count<len&&this.packetsize>4){this.data.push(...bytes);count++;}
+                        if(count<len&&this.packetsize>5){this.data.push(...bytes);count++;}
+                        if(count<len&&this.packetsize>6){this.data.push(...bytes);count++;}
                         this.transRate=count/len;
                         //console.log(`rpos:${count} : ${len}`);
                         return this.COM.sendBytes(this.data).then(_=>read());
@@ -606,6 +614,7 @@
 <script>
     var bt=document.getElementById('opencom');
     var output=document.getElementById('output');
+    var maxpacket=document.getElementById('maxpacket');
     var COM=new BLEUART((com,b)=>{
         if(b)
             bt.innerText='断开串口';
@@ -630,6 +639,7 @@
     }
 
     async function testswd() {
+        SWD.packetsize=maxpacket.value|0;
         output.innerText='';
         await runtime(async()=>{return SWD.connect()});
         output.innerText+=`coreID:${Hex32(SWD.coreID)}\r\n`;
