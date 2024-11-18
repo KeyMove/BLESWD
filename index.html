@@ -10,6 +10,14 @@
         margin: 0;
         padding: 0;
     }
+    div{
+        font-family: 'Courier New', Courier, monospace;
+    }
+    button{
+        width: 100px;
+        height: 60px;
+        
+    }
 </style>
 <body>
     <button id="opencom" onclick="openble()">打开串口</button>
@@ -132,6 +140,7 @@
             this.readservice=readservice;
             this.writeservice=writeservice;
 
+            this.rxFollowTx=true;
             this.rxReqCount=1;
             this.rxPromise=null;
             this.rxPromiseresolve=null;
@@ -140,7 +149,7 @@
             this.timer=setInterval(() => {
                 if(this.buffer.length>=this.rxReqCount)
                 {
-                    this.OnReceiveData(this.buffer);
+                    //this.OnReceiveData(this.buffer);
                     if(this.rxPromise){
                         if(this.buffer.length>=this.rxReqCount){
                             const buff=this.buffer.splice(0,this.rxReqCount);
@@ -229,10 +238,11 @@
         }
         sendBytes(v){
             if(!this.Sender)return;
+            if(this.rxFollowTx)this.rxReqCount=v.length;
             return this.Sender.writeValue(new Uint8Array(v));
         }
-        waitBytes(nbytes=46,call=()=>{}){
-            this.rxReqCount=nbytes;
+        waitBytes(call=()=>{},nbytes=-1){
+            if(nbytes>0)this.rxReqCount=nbytes;
             if(this.rxPromise)this.rxPromisereject();
             this.rxPromise = new Promise((resolve, reject) => {
                 this.rxPromiseresolve=resolve;
@@ -258,6 +268,7 @@
             this.rcache=[];
             this.wcache=[];
             this.coreID=0;
+            this.transRate=0;
             for (let i = 0; i < 46; i++) {
                 this.rcache.push(255);
                 this.wcache.push(255);
@@ -314,6 +325,7 @@
         }
 
         rst(){
+            this.COM.buffer.length=0;
             this.data.length=0;
             this.w32(0xffffffff);
             this.w32(0xffffffff);
@@ -327,17 +339,17 @@
             this.w32(0xffffffff);
             this.data.push(...[255, 255, 255]);
             return this.COM.sendBytes(this.data)
-            .then(e=>this.COM.waitBytes(192,(b)=>(this.lastInt=this.readInt(b))));
+            .then(e=>this.COM.waitBytes((b)=>(this.lastInt=this.readInt(b))));
         }
 
         wBus(addr,value){
             return this.wInt(addr,value)
-            .then(e=>this.COM.waitBytes(46,(b)=>(this.lastInt=this.readInt(this.lastData=b))));
+            .then(e=>this.COM.waitBytes((b)=>(this.lastInt=this.readInt(this.lastData=b))));
         }
 
         rBus(addr){
             return this.rInt(addr)
-            .then(e=>this.COM.waitBytes(46,(b)=>(this.lastInt=this.readInt(this.lastData=b))));
+            .then(e=>this.COM.waitBytes((b)=>(this.lastInt=this.readInt(this.lastData=b))));
         }
 
         WriteData(addr,data){
@@ -346,7 +358,7 @@
             this.data.push(...this.bwInt(0xbb,data));
             this.data.push(...this.brInt(0xbd));
             return this.COM.sendBytes(this.data)
-            .then(e=>this.COM.waitBytes(46*3,(b)=>(this.lastInt=this.readInt(this.lastData=b))));
+            .then(e=>this.COM.waitBytes((b)=>(this.lastInt=this.readInt(this.lastData=b))));
             
             return this.wBus(0x8b,addr)
             .then(e=>this.wBus(0xbb,data))
@@ -359,7 +371,7 @@
             this.data.push(...this.brInt(0x9f));
             this.data.push(...this.brInt(0xbd));
             return this.COM.sendBytes(this.data)
-            .then(e=>this.COM.waitBytes(46*3,(b)=>(this.lastInt=this.readInt(this.lastData=b))));
+            .then(e=>this.COM.waitBytes((b)=>(this.lastInt=this.readInt(this.lastData=b))));
 
             return this.wBus(0x8b,addr)
             .then(e=>this.rBus(0x9f))
@@ -407,6 +419,7 @@
         }
 
         softReset(){
+            this.COM.buffer.length=0;
             return this.Halt()
             .then(e=>this.WriteData(0xE000EDFC,1))
             .then(e=>this.ReadData(0xE000EDF0))
@@ -420,27 +433,52 @@
             return this.wBus(0x8B,addr)
             .then(e=>{
                 let len=(data.length+3)>>>2;
-                let p=waitBytes(46*len);
-                for (let i = 0; i < len; i++){
-                    this.wInt(0xBB,r.r32());
+                let write=()=>{
+                    if(r.rpos<r.data.length){
+                        this.data.length=0;
+                        this.data.push(...this.bwInt(0xBB,r.r32()));
+                        if(r.rpos<r.data.length)this.data.push(...this.bwInt(0xBB,r.r32()));
+                        if(r.rpos<r.data.length)this.data.push(...this.bwInt(0xBB,r.r32()));
+                        if(r.rpos<r.data.length)this.data.push(...this.bwInt(0xBB,r.r32()));
+                        //console.log(`rpos:${r.rpos} : size:${this.data.length}`);
+                        this.transRate=r.rpos/r.data.length;
+                        return this.COM.sendBytes(this.data).then(_=>write());
+                    }
+                    return null;
                 }
-                return p;
+                return write();
             })
-            .then(e=>rBus(0xBD));
+            .then(e=>this.rBus(0xBD))
+            .then(e=>{COM.buffer.length=0;});
         }
 
         readMem32(addr,length){
-            return wBus(0x8B,addr)
-            .then(e=>rBus(0x9F))
+            this.COM.buffer.length=0;
+            let len=(length+3)>>>2;
+            return this.wBus(0x8B,addr)
+            .then(e=>this.rBus(0x9F))
             .then(e=>{
-                let len=(length+3)>>>2;
-                let p=waitBytes(46*len);
-                for (let i = 0; i < len; i++)
-                    rInt(0x9F);
-                return p;
+                this.COM.buffer.length=0;
+                let bytes=this.brInt(0x9F);
+                let count=0;
+                let read=()=>{
+                    if(count<len){
+                        this.data.length=0;
+                        this.data.push(...bytes);count++;
+                        if(count<len){this.data.push(...bytes);count++;}
+                        if(count<len){this.data.push(...bytes);count++;}
+                        if(count<len){this.data.push(...bytes);count++;}
+                        this.transRate=count/len;
+                        //console.log(`rpos:${count} : ${len}`);
+                        return this.COM.sendBytes(this.data).then(_=>read());
+                    }
+                    return null;
+                }
+                return read();
             })
-            .then(e=>readInts(e,(length+3)>>>2));
-
+            .then(e=>{
+                return this.COM.waitBytes((b)=>{let v=this.readInts(b,len);this.COM.buffer.length=0;return v;},len*46);
+            })
         }
 
 
@@ -474,27 +512,7 @@
             return str.join('');
         }
 
-        _rInt(addr){
-            this.w8(addr);
-            this.data.push(...[255, 255, 255]);
-            this.w32(0xffffffff);
-            this.data.push(...[255, 255, 255]);
-            return this.writeData(this.data);
-        }
-
-        _wInt(addr,value){
-            this.w8(addr);
-            this.data.push(...[255, 255, 255, 255, 255]);
-            if(this.w32(0xffffffff))
-                this.data.push(255);
-            else
-                this.data.push(240);
-            return this.writeData(this.data);
-        }
-        
-
         readInt(data) {
-            data = data ? data : this.data;
             if (data.length < 35) return;
             let index = data.length - 35;
             let value = 0;
@@ -506,41 +524,24 @@
             return value;
         }
 
+        readInts(data,len){
+            if(data.length<46*len)return;
+            let index=data.length-35;
+            let vals=[];
+            for (let j = 0; j < len; j++) {
+                let value=0;
+                for(let i=0;i<32;i++){
+                    value>>>=1;
+                    if(data[index+i]>this.rate)value|=0x80000000;
+                }
+                index-=46;
+                vals.unshift(value);
+            }
+            return vals;
+        }
+
     }
 
-    function w32(v, data) {
-        data = data ? data : [];
-        let addr = 0;
-        for (let i = 0; i < 32; i++) {
-            if (v & 1) data.push(255);
-            else data.push(240);
-            addr += v;
-            v >>>= 1;
-        }
-        //return COM.sendBytes(data);
-        //return addr;
-    }
-    function w8(v, data) {
-        data = data ? data : [];
-        for (let i = 0; i < 8; i++) {
-            if (v & 1) data.push(255);
-            else data.push(240);
-            v >>= 1;
-        }
-        //return COM.sendBytes(data);
-    }
-    var pwmrate = 252;
-    function readInt(data) {
-        data = data ? data : recvdata;
-        if (data.length < 35) return;
-        let index = data.length - 35;
-        let value = 0;
-        for (let i = 0; i < 32; i++) {
-            value >>>= 1;
-            if (data[index + i] > pwmrate) value |= 0x80000000;
-        }
-        return value;
-    }
     function toHex(v) {
         let hex;
         if ((v & 0xf) < 10) hex = String.fromCharCode(48 + (v & 0xf));
@@ -557,32 +558,49 @@
         return ('00' + value.toString(16).toUpperCase()).slice(-2);
     }
     function Hex8(value) {
-        return ('0' + value.toString(16).toUpperCase()).slice(-2);
+        return ('0' + (value&0xff).toString(16).toUpperCase()).slice(-2);
     }
     function Hex16(value) {
-        return ('000' + value.toString(16).toUpperCase()).slice(-4);
+        return ('000' + (value&0xffff).toString(16).toUpperCase()).slice(-4);
     }
     function Hex32(value) {
-        return Hex16((value>>16)&0xffff)+Hex16(value&0xffff);
+        return Hex16((value>>>16))+Hex16(value);
     }
-    function init() {
-        let clks = [];
-        w32(0xffffffff, clks);
-        w32(0xffffffff, clks);
-        w8(0x9e, clks);
-        w8(0xe7, clks);
-        w32(0xffffffff, clks);
-        w32(0xffffffff, clks);
-        clks.push(...[240, 240]);
-        //let rst=clks;
 
-        //clks=[];
-        w8(0xa5, clks);
-        clks.push(...[255, 255, 255]);
-        w32(0xffffffff, clks);
-        clks.push(...[255, 255, 255]);
+    function u32t8(uint32){
+        uint32 = Array.isArray(uint32)?new Uint32Array(uint32):uint32;
+        let u8Array = new Uint8Array(uint32.length * 4);
+        for (let i = 0; i < uint32.length; i++) {
+            u8Array[i * 4] = uint32[i] & 0xFF;
+            u8Array[i * 4 + 1] = (uint32[i] >> 8) & 0xFF;
+            u8Array[i * 4 + 2] = (uint32[i] >> 16) & 0xFF;
+            u8Array[i * 4 + 3] = (uint32[i] >> 24) & 0xFF;
+        }
+        return u8Array;
+    }
 
-        COM.sendBytes(clks)
+    function viewhex(array,hex=true){
+        let str=[];
+        str.push('HEX   |')
+        for (let i = 0; i < 16; i++) {
+            str.push(hex && `${toHex(i&0xff)} ` || `${i.toString().padStart(2, '0')} `);
+        }
+        let newline=true;
+        let lineindex=0;
+        for (let i = 0; i < array.length; i++) {
+            
+            if(i%16==0){
+                newline=true;
+            }
+            if(newline){
+                newline=false;
+                let it=hex && (toHex((i>>>8)&0xff)+toHex(i&0xff)) || (''+i);
+                while(it.length<5)it+=' ';
+                str.push(`\r\n${it} |`);
+            }
+            str.push(`${toHex(array[i]&0xff)} `);
+        }
+        return str.join('');
     }
 </script>
 <script>
@@ -612,12 +630,19 @@
     }
 
     async function testswd() {
+        output.innerText='';
         await runtime(async()=>{return SWD.connect()});
         output.innerText+=`coreID:${Hex32(SWD.coreID)}\r\n`;
         await runtime(async()=>{return SWD.softReset()});
         output.innerText+=`isHalt:${Hex32(await SWD.isHalt())}\r\n`;
         await runtime(async()=>{return output.innerText+=(await SWD.viewregs())});
+        output.innerText+=`write 1K Data\r\n`;
+        let b=[];for(let i=0;i<1024;i++)b.push(i&0xff);
+        await runtime(async()=>{return SWD.writeMem32(0x20000000,b)});
+        output.innerText+=`read 1K Data\r\n`;
+        await runtime(async()=>{output.innerText+=(viewhex(u32t8(await SWD.readMem32(0x20000000,1024))))+'\r\n'})
     }
+
 
 </script>
 </html>
