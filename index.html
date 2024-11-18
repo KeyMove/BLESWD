@@ -439,7 +439,7 @@
                         this.data.push(...this.bwInt(0xBB,r.r32()));
                         if(r.rpos<r.data.length)this.data.push(...this.bwInt(0xBB,r.r32()));
                         if(r.rpos<r.data.length)this.data.push(...this.bwInt(0xBB,r.r32()));
-                        if(r.rpos<r.data.length)this.data.push(...this.bwInt(0xBB,r.r32()));
+                        //if(r.rpos<r.data.length)this.data.push(...this.bwInt(0xBB,r.r32()));
                         //console.log(`rpos:${r.rpos} : size:${this.data.length}`);
                         this.transRate=r.rpos/r.data.length;
                         return this.COM.sendBytes(this.data).then(_=>write());
@@ -467,7 +467,7 @@
                         this.data.push(...bytes);count++;
                         if(count<len){this.data.push(...bytes);count++;}
                         if(count<len){this.data.push(...bytes);count++;}
-                        if(count<len){this.data.push(...bytes);count++;}
+                        //if(count<len){this.data.push(...bytes);count++;}
                         this.transRate=count/len;
                         //console.log(`rpos:${count} : ${len}`);
                         return this.COM.sendBytes(this.data).then(_=>read());
