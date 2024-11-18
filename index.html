@@ -432,9 +432,9 @@
 
         writeMem32(addr,data){
             let r=new DataHelper(data);
+            let len=(data.length+3)>>>2;
             return this.wBus(0x8B,addr)
             .then(e=>{
-                let len=(data.length+3)>>>2;
                 let write=()=>{
                     if(r.rpos<r.data.length){
                         this.data.length=0;
@@ -453,6 +453,7 @@
                 }
                 return write();
             })
+            .then(e=>this.COM.waitBytes(()=>{},len*46))
             .then(e=>this.rBus(0xBD))
             .then(e=>{COM.buffer.length=0;});
         }
