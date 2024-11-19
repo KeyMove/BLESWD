@@ -3,28 +3,395 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>BLESWD</title>
 </head>
 <style>
     *{
-        margin: 0;
-        padding: 0;
+        padding: 0;margin: 0;
+        box-sizing: border-box;
     }
-    div{
-        font-family: 'Courier New', Courier, monospace;
+    body{
+        overflow: hidden;
     }
-    button{
-        width: 100px;
-        height: 60px;
+    .mainpanel{
+        display: flex;
+        min-height: 100vh;
+        background: linear-gradient(135deg,
+        hsl(170deg,80%,70%),
+        hsl(190deg,80%,70%),
+        hsl(250deg,80%,70%),
+        hsl(320deg,80%,70%)
+        );
+        justify-content: center;
+        align-items: center;
+        background-size: 200% 200%;
+        animation: gradient-move 30s infinite alternate;
+    }
+    @keyframes gradient-move {
+        0%{background-position: 0% 0%;}
+        100%{background-position: 100% 100%;}
+    }
+    .box{
+        display: block;
+        background:rgba(255, 255, 255, .1);
+        min-height: 400px;
+        border-radius: 10px;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 25px 45px rgba(0,0,0,0.1);
+    }
+    .box::before{
+        display: block;
+        content: "BLE下载器";
+        text-align: center;
+        font-size: 1.5em;
         
     }
+    .boxitems{
+        border-top: 2px solid #000;
+        display: flex;
+        margin: 1em;
+    }
+    .vbox{
+        display: block;
+    }
+    .bt{
+        
+        width: 100%;
+        background:rgba(255, 255, 255, .2);
+        border: none;
+        padding: 10px 20px;
+        border-radius: 35px;
+        border: 1px solid rgba(255, 255, 255, .5);
+        border-right: 1px solid rgba(255, 255, 255, .2);
+        border-bottom: 1px solid rgba(255, 255, 255, .2);
+        font-size: 16px;
+        box-shadow: 0 5px 15px rgba(255, 255, 255, .1);
+        cursor: pointer;
+        margin-bottom: 5px;
+    }
+    .bt:hover{
+        box-shadow: 0 0 10px rgba(255, 255, 255, 0.3),
+        0 0 60px rgba(255, 255, 255, 0.3);
+    }
+
 </style>
 <body>
-    <button id="opencom" onclick="openble()">打开串口</button>
-    <button id="opencom" onclick="testswd()">测试SWD</button>
-    <input type="text" id="maxpacket" value="4" style="height: 50px;">
-    <div contenteditable="true" id="output"></div>
+<div class="mainpanel">
+    <div class="box">
+        <div id="dirselect" style="margin: 10px; display: flex; justify-content: center;">
+            <button id="com_open_btn" class="bt" style="border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: 0;" onclick="COM.open()">连接设备</button>
+            <button class="bt" style="border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0;" onclick="" style="cursor: default;">
+                <input oninput="filterSelect()" type="text" id="romfit" placeholder="选择型号" style="position: absolute;right: 58px; width: 100px;height: 23px;background-color: transparent;">
+                <select oninput="loadrom()" id="romselect" style=" margin-left: 90px; width: 15px;height: 22px;border: 0px;background-color: transparent;">
+                    <option selected>MB0220</option>
+                    <option>MB0360</option>
+                    <option>MB0358</option>
+                </select>
+            </button>
+        </div>
+        <div style="margin: 10px; display: flex; justify-content: center;">
+            <button class="bt" onclick="" style="cursor: default;">下载算法选择
+                <select id="flmselect" style="border: 0px;background-color: transparent;width: 60%;">
+                    <option selected>PY32F002A</option>
+                </select>
+            </button>
+        </div>
+        <div class="boxitems">
+            <div class="imgpanel" onclick="fileInput.click()">
+                <input type="file" id="fileInput" accept=".axf, .flm, .hex" style="display: none;" />
+                <canvas id="canvas" class="panel" width="308" height="280" style="display: block; margin: auto; border: 2px dashed #ccc;"></canvas>
+            </div>
+            <div style="display: block;overflow: hidden;">
+                <div id="outputtext" contenteditable="true" style="max-width: 400px;" ></div>
+            </div>
+        </div>
+        <div style="margin: 10px; display: none; justify-content: center;">
+            <progress id="flmupload" value="0" max="100" style="width: 100%;"></progress>
+        </div>
+        <div>
+            <button class="bt" id="startdownload" onclick="downloadselect()">下载</button>
+        </div>
+    </div>
+</div>
 </body>
+<script>
+    async function showDirectoryStructure() {
+        try {
+            const directoryHandle = root = await window.showDirectoryPicker();
+            //console.log("Directory structure:", directoryHandle);
+            
+            // 遍历文件夹结构
+            async function traverseDirectory(handle,allfile={},path='') {
+                const e=handle.entries();
+                for await(const entry of e) {
+                    //console.log(entry);
+                    if(entry[1].kind==='file'){
+                        let index=entry[0].lastIndexOf('.');
+                        let fname=index<0?entry[0]:entry[0].substring(0,index);
+                        allfile[path+entry[0]]={name:entry[0],_name:fname,dir:handle,file:entry[1],path:path};
+                    }
+                    else{
+                        //allfile[0].push({name:entry[0],dir:handle,file:entry[1]});
+                        allfile[path+entry[0]]={name:entry[0],dir:entry[1],file:entry[1]};
+                        await traverseDirectory(entry[1],allfile,path+entry[0]+'/');
+                    }
+                }
+                return allfile;
+            }
+            let files=await traverseDirectory(directoryHandle);
+            files['/']=directoryHandle;
+            console.log(files);
+            return files;
+        } catch (err) {
+            console.error(err);
+        }
+    }
+    async function checkFileUpdate(fileHandle) {
+        try {
+            const file = await fileHandle.getFile();
+            const fileModifiedDate = new Date(file.lastModified);
+            const currentDate = new Date();
+            const timeDifference = currentDate - fileModifiedDate;
+            const updateThreshold = 1000 * 60 * 5; // 5 minutes in milliseconds
+            if (timeDifference < updateThreshold) {
+                console.log(`File ${file.name} has been updated recently.`);
+                return true;
+            } else {
+                console.log(`File ${file.name} has not been updated recently.`);
+                return false;
+            }
+        } catch (error) {
+            console.error(`Error checking file update: ${error}`);
+            return false;
+        }
+    }
+</script>
+<script>
+    function download_uint8(data,name='rom.bin'){
+        if(!data)return;
+        if(Array.isArray(data)){
+            data=new Uint8Array(data);
+        }
+        const blob = new Blob([data], { type: 'application/octet-stream' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.href = url;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    function Elfparse(elfarray){
+        if (Array.isArray(elfarray)) {
+            elfarray = new Uint8Array(elfarray);
+        }
+        let elfHeaderView = new DataView(elfarray.buffer);
+        let elfMagic = elfHeaderView.getUint32(0, true); // ELF magic number
+        if (elfMagic !== 0x464c457f) {
+            console.error('Not a valid ELF file');
+            return;
+        }
+        let elfHeader = {
+            'e_ident': elfarray.slice(0, 16),
+            'e_type': elfHeaderView.getUint16(16, true),
+            'e_machine': elfHeaderView.getUint16(18, true),
+            'e_version': elfHeaderView.getUint32(20, true),
+            'e_entry': elfHeaderView.getUint32(24, true),
+            'e_phoff': elfHeaderView.getUint32(28, true),
+            'e_shoff': elfHeaderView.getUint32(32, true),
+            'e_flags': elfHeaderView.getUint32(36, true),
+            'e_ehsize': elfHeaderView.getUint16(40, true),
+            'e_phentsize': elfHeaderView.getUint16(42, true),
+            'e_phnum': elfHeaderView.getUint16(44, true),
+            'e_shentsize': elfHeaderView.getUint16(46, true),
+            'e_shnum': elfHeaderView.getUint16(48, true),
+            'e_shstrndx': elfHeaderView.getUint16(50, true)
+        };
+        let elfProgramHeaders = [];
+        for (let i = 0; i < elfHeader.e_phnum; i++) {
+            let offset = elfHeader.e_phoff + i * elfHeader.e_phentsize;
+            let programHeader = {
+                'p_type': elfHeaderView.getUint32(offset, true),
+                'p_offset': elfHeaderView.getUint32(offset + 4, true),
+                'p_vaddr': elfHeaderView.getUint32(offset + 8, true),
+                'p_paddr': elfHeaderView.getUint32(offset + 12, true),
+                'p_filesz': elfHeaderView.getUint32(offset + 16, true),
+                'p_memsz': elfHeaderView.getUint32(offset + 20, true),
+                'p_flags': elfHeaderView.getUint32(offset + 24, true),
+                'p_align': elfHeaderView.getUint32(offset + 28, true)
+            };
+            elfProgramHeaders.push(programHeader);
+        }
+        let rom = [];
+        for (let i = 0; i < elfProgramHeaders.length; i++) {
+            if (elfProgramHeaders[i].p_type === 1 && (elfProgramHeaders[i].p_flags & 0x4) !== 0) {
+                rom.push(elfarray.slice(elfProgramHeaders[i].p_offset, elfProgramHeaders[i].p_offset + elfProgramHeaders[i].p_filesz));
+            }
+        }
+        let elfSectionHeaders = [];
+        for (let i = 0; i < elfHeader.e_shnum; i++) {
+            let offset = elfHeader.e_shoff + i * elfHeader.e_shentsize;
+            let sectionHeader = {
+                'sh_name': elfHeaderView.getUint32(offset, true),
+                'sh_type': elfHeaderView.getUint32(offset + 4, true),
+                'sh_flags': elfHeaderView.getUint32(offset + 8, true),
+                'sh_addr': elfHeaderView.getUint32(offset + 12, true),
+                'sh_offset': elfHeaderView.getUint32(offset + 16, true),
+                'sh_size': elfHeaderView.getUint32(offset + 20, true),
+                'sh_link': elfHeaderView.getUint32(offset + 24, true),
+                'sh_info': elfHeaderView.getUint32(offset + 28, true),
+                'sh_addralign': elfHeaderView.getUint32(offset + 32, true),
+                'sh_entsize': elfHeaderView.getUint32(offset + 36, true)
+            };
+            elfSectionHeaders.push(sectionHeader);
+        }
+        
+
+        let elfSectionMap={};
+        let elfSectionNames = [];
+        let shstrtab = elfarray.slice(elfSectionHeaders[elfHeader.e_shstrndx].sh_offset, elfSectionHeaders[elfHeader.e_shstrndx].sh_offset + elfSectionHeaders[elfHeader.e_shstrndx].sh_size);
+        for (let i = 0; i < elfHeader.e_shnum; i++) {
+            let offset = elfSectionHeaders[i].sh_name;
+            let name = '';
+            for (let j = offset; shstrtab[j] !== 0; j++) {
+                name += String.fromCharCode(shstrtab[j]);
+            }
+            elfSectionNames.push(name);
+            elfSectionMap[name]=elfSectionHeaders[i];
+        }
+        let elfSymbolsSection = null;
+        let elfStringSection = null;
+        let elfStringMap = {};
+        let symtabindex=-1;
+        for (let i = 0; i < elfHeader.e_shnum; i++) {
+            if (elfSectionNames[i] === '.symtab') {
+                symtabindex=i;
+                elfSymbolsSection = elfarray.slice(elfSectionHeaders[i].sh_offset, elfSectionHeaders[i].sh_offset + elfSectionHeaders[i].sh_size);
+            }
+            if (elfSectionNames[i] === '.strtab') {
+                let strtabSection = elfStringSection = elfarray.slice(elfSectionHeaders[i].sh_offset, elfSectionHeaders[i].sh_offset + elfSectionHeaders[i].sh_size);
+                for (let j = 0; j < strtabSection.length; j++) {
+                    let name = '';
+                    let startindex=j;
+                    while (strtabSection[j] !== 0) {
+                        name += String.fromCharCode(strtabSection[j]);
+                        j++;
+                    }
+                    elfStringMap[startindex]=name;
+                }
+            }
+        }
+        let elfSymbols = [];
+        let symbolNames = {};
+        if (elfSymbolsSection) {
+            let symbolSize = 16; // Assuming 32-bit ELF
+            let numSymbols = elfSymbolsSection.length / symbolSize;
+            for (let i = 0; i < numSymbols; i++) {
+                let offset = elfSectionHeaders[symtabindex].sh_offset + i * symbolSize;
+                let symbol = {
+                    'st_name':  elfHeaderView.getUint32(offset, true),
+                    'st_value': elfHeaderView.getUint32(offset + 4, true),
+                    'st_size':  elfHeaderView.getUint32(offset + 8, true),
+                    'st_info':  elfHeaderView.getUint8(offset + 12),
+                    'st_other': elfHeaderView.getUint8(offset + 13),
+                    'st_shndx': elfHeaderView.getUint16(offset + 14, true)
+                };
+                elfSymbols.push(symbol);
+            }
+            
+            for (let symbol of elfSymbols) {
+                let name = elfStringMap[symbol.st_name];
+                if (name) {
+                    symbolNames[name] = symbol;
+                }
+            }
+            console.log(symbolNames);
+            
+        }
+        if(elfSectionMap["DevDscr"]){
+            let dt=elfSectionMap["DevDscr"];
+            let constDataSection = dt.sh_offset;
+            let constDataSize = dt.sh_size;
+            let flashDevice = {
+                Vers: elfHeaderView.getUint16(constDataSection, true),
+                DevName: '',
+                DevType: elfHeaderView.getUint16(constDataSection + 2+128, true),
+                DevAdr: elfHeaderView.getUint32(constDataSection + 4+128, true),
+                szDev: elfHeaderView.getUint32(constDataSection + 8+128, true),
+                szPage: elfHeaderView.getUint32(constDataSection + 12+128, true),
+                Res: elfHeaderView.getUint32(constDataSection + 16+128, true),
+                valEmpty: elfHeaderView.getUint32(constDataSection + 20+128, true),
+                toProg: elfHeaderView.getUint32(constDataSection + 24+128, true),
+                toErase: elfHeaderView.getUint32(constDataSection + 28+128, true),
+                sectors: []
+            };
+
+            for (let i = 0; i < 128; i++) {
+                flashDevice.DevName += String.fromCharCode(elfarray[constDataSection+i+2]);
+            }
+            for (let i = 0; i < 512; i += 8) {
+                let sector = {
+                    szSector: elfHeaderView.getUint32(constDataSection + 32 + 128 + i, true),
+                    AddrSector: elfHeaderView.getUint32(constDataSection + 32 + 128 + i + 4, true)
+                };
+                if(sector.szSector===0xffffffff)break;
+                flashDevice.sectors.push(sector);
+            }
+            //let BLOB_HEADER = [0x00,0xBE,0x0A,0xE0,0x0D,0x78,0x2D,0x06,0x68,0x40,0x08,0x24,0x40,0x00,0x00,0xD3,0x58,0x40,0x64,0x1E,0xFA,0xD1,0x49,0x1C,0x52,0x1E,0x00,0x2A,0xF2,0xD1,0x70,0x47];
+            let BLOB_HEADER = [0x00,0xBE,0x0A,0xE0];
+            let HEADER_SIZE = BLOB_HEADER.length;
+            let Stack_Size = 128;
+            let entry = 0x20000000;
+            flashDevice['Init']         =entry+HEADER_SIZE+symbolNames['Init'       ].st_value;
+            flashDevice['UnInit']       =entry+HEADER_SIZE+symbolNames['UnInit'     ].st_value;
+            flashDevice['EraseChip']    =entry+HEADER_SIZE+symbolNames['EraseChip'  ].st_value;
+            flashDevice['EraseSector']  =entry+HEADER_SIZE+symbolNames['EraseSector'].st_value;
+            flashDevice['ProgramPage']  =entry+HEADER_SIZE+symbolNames['ProgramPage'].st_value;
+            let blobHeaderArray = new Uint8Array(BLOB_HEADER);
+            let romWithBlobHeader = new Uint8Array(rom[0].length + blobHeaderArray.length);
+            romWithBlobHeader.set(blobHeaderArray, 0);
+            romWithBlobHeader.set(rom[0], blobHeaderArray.length);
+            rom[0] = romWithBlobHeader;
+            flashDevice['ROM']=rom[0];
+            flashDevice['RAM']=entry;
+            flashDevice['BUFF']=(entry+rom[0].length+1023)&~1023;
+            flashDevice['BKPT']=entry+1;
+            flashDevice['RSB']=entry+rom[0].length;
+            flashDevice['RSP']=entry+rom[0].length+flashDevice.szPage+Stack_Size;
+            //console.log(flashDevice);
+            return flashDevice;
+        }
+        return rom.length>0?{ROM:rom[0]}:null;
+    }
+
+    function hex2bin(hexfile) {
+        let binArray = [];
+        let lines = hexfile.split('\n');
+        for (let line of lines) {
+            if (line.startsWith(':')) {
+                let byteCount = parseInt(line.substring(1, 3), 16);
+                let address = parseInt(line.substring(3, 7), 16);
+                let recordType = parseInt(line.substring(7, 9), 16);
+                if (recordType !== 0) continue; // Skip if record type is not data
+                let data = line.substring(9, 9 + byteCount * 2);
+                let checksum = parseInt(line.substring(9 + byteCount * 2), 16);
+                let sum = (byteCount + (address >> 8) + (address & 0xFF) + parseInt(recordType, 16));
+                checksum=((~checksum&0xff)+1)&0xff;
+                for (let i = 0; i < data.length; i += 2) {
+                    let byte = parseInt(data.substring(i, i + 2), 16);
+                    binArray.push(byte);
+                    sum += byte;
+                }
+                if ((sum & 0xFF) !== checksum) {
+                    console.error('Checksum error on line: ' + line);
+                }
+            }
+        }
+        return binArray;
+    }
+</script>
+
 <script>
     class DataHelper{
         constructor(val=null){
@@ -165,6 +532,12 @@
             this.logs.push(obj.toString());
         }
         open(){
+            if(this.connected){
+                this.close();
+                this.connected=false;
+                this.OnstatusChange(this,false);
+                return;
+            }
             try{
                 navigator.bluetooth.requestDevice({ filters: [{ services: [this.filters] }] })
                 .then(device => {
@@ -612,48 +985,530 @@
         return str.join('');
     }
 </script>
+
 <script>
-    var bt=document.getElementById('opencom');
-    var output=document.getElementById('output');
-    var maxpacket=document.getElementById('maxpacket');
-    var COM=new BLEUART((com,b)=>{
-        if(b)
-            bt.innerText='断开串口';
-        else
-            bt.innerText='打开串口';
+    var bootpy32=[
+    0x10,0x08,0x00,0x20,0xE9,0x00,0x00,0x20,0xF1,0x00,0x00,0x20,0xF3,0x00,0x00,0x20,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xF5,0x00,0x00,0x20,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xF7,0x00,0x00,0x20,0xF9,0x00,0x00,0x20,
+    0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,
+    0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,
+    0x00,0x00,0x00,0x00,0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,0x00,0x00,0x00,0x00,
+    0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,0x00,0x00,0x00,0x00,
+    0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,0x00,0x00,0x00,0x00,0xFB,0x00,0x00,0x20,
+    0x00,0x00,0x00,0x00,0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,0xFB,0x00,0x00,0x20,
+    0x00,0x00,0x00,0x00,0xFB,0x00,0x00,0x20,0x00,0x00,0x00,0x00,0xFB,0x00,0x00,0x20,
+    0xFB,0x00,0x00,0x20,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x03,0x48,0x85,0x46,0x00,0xF0,0x1E,0xF8,0x00,0x48,0x00,0x47,0x81,0x01,0x00,0x20,
+    0x10,0x08,0x00,0x20,0x02,0x49,0x03,0x4A,0x08,0x68,0x10,0x40,0xFC,0xD0,0x70,0x47,
+    0x00,0x06,0x00,0x20,0x0F,0x00,0x00,0x00,0x04,0x48,0x80,0x47,0x04,0x48,0x00,0x47,
+    0xFE,0xE7,0xFE,0xE7,0xFE,0xE7,0xFE,0xE7,0xFE,0xE7,0xFE,0xE7,0x29,0x01,0x00,0x20,
+    0xC1,0x00,0x00,0x20,0x06,0x4C,0x01,0x25,0x06,0x4E,0x05,0xE0,0xE3,0x68,0x07,0xCC,
+    0x2B,0x43,0x0C,0x3C,0x98,0x47,0x10,0x34,0xB4,0x42,0xF7,0xD3,0xFF,0xF7,0xD4,0xFF,
+    0x24,0x03,0x00,0x20,0x44,0x03,0x00,0x20,0x70,0x47,0x30,0xB4,0x74,0x46,0x64,0x1E,
+    0x25,0x78,0x64,0x1C,0xAB,0x42,0x00,0xD2,0x1D,0x46,0x63,0x5D,0x5B,0x00,0xE3,0x18,
+    0x30,0xBC,0x18,0x47,0x02,0xE0,0x08,0xC8,0x12,0x1F,0x08,0xC1,0x00,0x2A,0xFA,0xD1,
+    0x70,0x47,0x70,0x47,0x00,0x20,0x01,0xE0,0x01,0xC1,0x12,0x1F,0x00,0x2A,0xFB,0xD1,
+    0x70,0x47,0x00,0x00,0x05,0x49,0x00,0x20,0x82,0x00,0x53,0x18,0x8A,0x58,0x5B,0x68,
+    0x13,0x60,0x80,0x1C,0xC0,0xB2,0x02,0x28,0xF6,0xD3,0x70,0x47,0x1C,0x03,0x00,0x20,
+    0xFF,0xF7,0xF0,0xFF,0x5E,0x4C,0x5D,0x48,0xA0,0x60,0x5E,0x48,0xA0,0x60,0x5E,0x48,
+    0xE0,0x60,0x5E,0x48,0xE0,0x60,0x5E,0x4D,0x00,0x26,0x5E,0x4F,0x6E,0x60,0xFF,0xF7,
+    0x99,0xFF,0x03,0x00,0xFF,0xF7,0xC1,0xFF,0x07,0x05,0x06,0x14,0x60,0x75,0x8E,0x05,
+    0xA8,0x00,0xF4,0xE7,0x00,0x20,0x31,0x46,0xAE,0x60,0xC2,0xB2,0x3A,0x54,0x40,0x1C,
+    0x51,0x18,0x80,0xB2,0xFF,0x28,0xF8,0xD9,0xA9,0x60,0x80,0x20,0x28,0x60,0xE6,0xE7,
+    0x39,0x78,0x01,0x20,0x3A,0x5C,0x51,0x18,0x40,0x1C,0x00,0x06,0x89,0xB2,0x00,0x0E,
+    0xF8,0xD1,0xA8,0x68,0x81,0x42,0x01,0xD0,0x40,0x20,0xEF,0xE7,0x01,0x20,0xE9,0x68,
+    0xC0,0x06,0x08,0x18,0x21,0x69,0xC9,0x03,0xFC,0xD4,0x61,0x69,0x46,0x4A,0x11,0x43,
+    0x61,0x61,0x00,0x21,0x52,0x11,0x04,0xE0,0x1F,0x29,0x02,0xD1,0x63,0x69,0x13,0x43,
+    0x63,0x61,0x8B,0x00,0xFB,0x58,0x08,0xC0,0x49,0x1C,0x89,0xB2,0x20,0x29,0xF3,0xD3,
+    0x21,0x69,0xC9,0x03,0xFC,0xD4,0x21,0x69,0x01,0x23,0x19,0x43,0x21,0x61,0x61,0x69,
+    0x39,0x4B,0x19,0x43,0x61,0x61,0x20,0x21,0x04,0xE0,0x3F,0x29,0x02,0xD1,0x63,0x69,
+    0x13,0x43,0x63,0x61,0x8B,0x00,0xFB,0x58,0x08,0xC0,0x49,0x1C,0x89,0xB2,0x40,0x29,
+    0xF3,0xD3,0x20,0x69,0xC0,0x03,0xFC,0xD4,0x20,0x69,0x01,0x21,0x08,0x43,0x20,0x61,
+    0x60,0x69,0x88,0x43,0x60,0x61,0xB0,0xE7,0x61,0x69,0x04,0x20,0x01,0x43,0x61,0x61,
+    0x61,0x69,0x82,0x05,0x11,0x43,0x61,0x61,0x41,0x06,0x0E,0x60,0x21,0x69,0xC9,0x03,
+    0xFC,0xD4,0x21,0x69,0x01,0x22,0x11,0x43,0x21,0x61,0x61,0x69,0x81,0x43,0x61,0x61,
+    0x9B,0xE7,0x20,0x69,0xC0,0x03,0xFC,0xD4,0x20,0x69,0x01,0x22,0x10,0x43,0x20,0x61,
+    0x20,0x6A,0xFF,0x21,0x08,0x43,0x20,0x62,0x60,0x69,0x51,0x04,0x08,0x43,0x60,0x61,
+    0x13,0x48,0x80,0x30,0x06,0x60,0x20,0x69,0xC0,0x03,0xFC,0xD4,0x20,0x69,0x10,0x43,
+    0x20,0x61,0x82,0xE7,0x20,0x69,0xC0,0x03,0xFC,0xD4,0x21,0x69,0x01,0x20,0x01,0x43,
+    0x21,0x61,0x21,0x6A,0x09,0x0A,0x09,0x02,0xAA,0x31,0x21,0x62,0x61,0x69,0x42,0x04,
+    0x11,0x43,0x61,0x61,0x06,0x49,0x80,0x31,0x0E,0x60,0x21,0x69,0xC9,0x03,0xFC,0xD4,
+    0x21,0x69,0x01,0x43,0x21,0x61,0x68,0xE7,0x2E,0x60,0x50,0xE7,0x23,0x01,0x67,0x45,
+    0x00,0x20,0x02,0x40,0xAB,0x89,0xEF,0xCD,0x3B,0x2A,0x19,0x08,0x7F,0x6E,0x5D,0x4C,
+    0x00,0x06,0x00,0x20,0x10,0x06,0x00,0x20,0x01,0x00,0x00,0x01,0x04,0x10,0x02,0x40,
+    0xFF,0x90,0xFF,0x00,0x44,0x03,0x00,0x20,0x00,0x06,0x00,0x20,0x10,0x00,0x00,0x00,
+    0x44,0x01,0x00,0x20,0x54,0x03,0x00,0x20,0x10,0x06,0x00,0x20,0x00,0x02,0x00,0x00,
+    0x54,0x01,0x00,0x20,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,
+    ];
+
+    async function downloadbin(bin,bootloader=bootpy32) {
+        if(!bin)return;
+        const ADDR_STAS= 0x20000600;
+        const ADDR_XOR = 0x20000604;
+        const ADDR_SUM = 0x20000608;
+        const ADDR_ADDR= 0x2000060C;
+        const ADDR_DATA= 0x20000610;
+
+        await SWD.connect()
+        .then(e=>SWD.connect())
+        .then(e=>SWD.softReset())
+        .then(e=>SWD.writeMem32(0x20000000,bootloader))
+        .then(e=>SWD.WriteReg(15,0x20000000))
+        .then(e=>SWD.WriteData(0xE000ED08,0x20000000))
+        .then(e=>SWD.Go())
+        .then(e=>SWD.WriteData(ADDR_ADDR,0xffffffff))
+        .then(e=>SWD.WriteData(ADDR_STAS,3))
+        for (let i = 0; i < 16; i++) {
+            let sta=await SWD.ReadData(ADDR_STAS);
+            console.log(`i:${i} sta:${sta}`);
+            if(sta&0x80)break;
+            if(i==15)return;
+        }
+        let count=bin.length;
+        let binsize=bin.length;
+        let index=0;
+        let packetsize=0;
+        console.log(`count:${count}`);
+        setUploadRate(0);
+        let timer=setInterval(() => {
+            setUploadRate((index+(SWD.transRate*256))/binsize);
+        }, 100);
+        while(count){
+            let chunkSize = count>=256?256:count;
+            let chunk = bin.slice(0, chunkSize);
+            bin = bin.slice(chunkSize);
+            count -= chunkSize;
+            let sum=0;
+            if (chunk.length<256){
+                if(!Array.isArray(chunk)){
+                    let carr=[];
+                    carr.push(...chunk);
+                    chunk=carr;
+                }
+                while(chunk.length < 256)chunk.push(0xFF);
+            }
+            for(let i = 0; i < chunk.length; i++) {
+                sum += chunk[i];
+            }
+            console.log(`count:${count} chunk:${chunk.length} index:${index}`);
+            await SWD.writeMem32(ADDR_DATA, chunk)
+            .then(e=>SWD.WriteData(ADDR_SUM,sum))
+            .then(e=>SWD.WriteData(ADDR_ADDR,index))
+            .then(e=>SWD.WriteData(ADDR_STAS,2))
+            for (let i = 0; i < 16; i++) {
+                let sta=await SWD.ReadData(ADDR_STAS);
+                console.log(`i:${i} sta:${sta}`);
+                if(sta&0x80)break;
+                if(i==15)return;
+            }
+            SWD.transRate=0;
+            index+=chunkSize;
+        }
+        clearInterval(timer);
+        setUploadRate(-1);
+        await SWD.connect()
+        .then(e=>SWD.connect())
+        .then(e=>SWD.softReset())
+        .then(e=>SWD.Go());
+    }
+
+
+    async function downloadbin_device(bin=null,device=null) {
+        if(!bin)return;
+        if(!device)return;
+        await SWD.connect()
+        .then(e=>SWD.connect())
+        .then(e=>SWD.softReset());
+        let index=0;
+        let count=device.ROM.length;
+        do{
+            let ct=count>=1024?1024:count;
+            let chunk = device.ROM.slice(index, index + ct);
+            await SWD.writeMem32(device.RAM + index, chunk);
+            count-=ct;
+            index+=ct;
+        }while(count);
+        
+        index=0;
+        count=bin.length;
+        console.log(`count:${count}`);
+        let exec=async (func,r0=0,r1=0,r2=0,r3=0,databuff=device.RSB,sp=device.BUFF-4,bkpt=device.BKPT)=>{
+            await SWD.WriteReg(0,r0)
+            .then(e=>SWD.WriteReg(1,r1))
+            .then(e=>SWD.WriteReg(2,r2))
+            .then(e=>SWD.WriteReg(3,r3))
+            .then(e=>SWD.WriteReg(9,databuff))
+            .then(e=>SWD.WriteReg(13,sp))
+            .then(e=>SWD.WriteReg(14,bkpt))
+            .then(e=>SWD.WriteReg(15,func))
+            .then(e=>SWD.WriteReg(16,0x01000000))
+            .then(e=>SWD.Go());
+            for (let i = 0; i < 160; i++)if(await SWD.isHalt())return true;
+            return false;
+        }
+
+        if(!await exec(device.Init))return;
+        if(!await exec(device.EraseChip))return;
+        let pagesize=1024;
+        let binsize=count;
+        while(count){
+            
+            let chunkSize = count>=pagesize?pagesize:count;
+            let chunk = bin.slice(0, chunkSize);
+            bin = bin.slice(chunkSize);
+            count -= chunkSize;
+            console.log(`count:${count} chunk:${chunk.length} index:${index} rate:${index/binsize}`);
+            let wr=await SWD.writeMem32(device.BUFF,chunk)
+            .then(e=>exec(device.ProgramPage,index+device.DevAdr,chunkSize,device.BUFF));
+            if(!wr)return;
+            index+=chunkSize;
+            setUploadRate(index/binsize);
+        }
+        setUploadRate(-1);
+        await SWD.connect()
+        .then(e=>SWD.connect())
+        .then(e=>SWD.softReset())
+        .then(e=>SWD.Go());
+    }
+
+
+    async function syswrite(func,r0=0,r1=0,r2=0,r3=0,databuff=0x20000400,sp=0x200003FC,bkpt=0x20000001){
+        await WriteReg(0,r0)
+        .then(e=>WriteReg(1,r1))
+        .then(e=>WriteReg(2,r2))
+        .then(e=>WriteReg(3,r3))
+        .then(e=>WriteReg(9,databuff))
+        .then(e=>WriteReg(13,sp))
+        .then(e=>WriteReg(14,bkpt))
+        .then(e=>WriteReg(15,func))
+        .then(e=>WriteReg(16,0x01000000));
+    }
+    
+    let syscall=async (func,r0=0,r1=0,r2=0,r3=0,sp=0x200003FC,bkpt=0x20000001)=>{
+        await WriteReg(0,r0)
+        .then(e=>WriteReg(1,r1))
+        .then(e=>WriteReg(2,r2))
+        .then(e=>WriteReg(3,r3))
+        //.then(e=>WriteReg(9,device.RSB))
+        .then(e=>WriteReg(13,sp))
+        .then(e=>WriteReg(14,bkpt))
+        .then(e=>WriteReg(15,func))
+        .then(e=>Go());
+        for (let i = 0; i < 160; i++)if(await isHalt())break;
+    }
+
+    function viewhex(array,hex=true){
+        let str=[];
+        str.push('HEX   |')
+        for (let i = 0; i < 16; i++) {
+            str.push(hex && `${toHex(i&0xff)} ` || `${i.toString().padStart(2, '0')} `);
+        }
+        let newline=true;
+        let lineindex=0;
+        for (let i = 0; i < array.length; i++) {
+            
+            if(i%16==0){
+                newline=true;
+            }
+            if(newline){
+                newline=false;
+                let it=hex && (toHex((i>>>8)&0xff)+toHex(i&0xff)) || (''+i);
+                while(it.length<5)it+=' ';
+                str.push(`\r\n${it} |`);
+            }
+            str.push(`${toHex(array[i]&0xff)} `);
+        }
+        return str.join('');
+    }
+
+
+    async function viewregs(){
+        let str=[];
+        for (let i = 0; i < 17; i++) {
+            let v=await ReadReg(i);
+            if(i<13){
+                let r=`R`+i;
+                if(i<10)r+=' '
+                str.push(`${r} = 0x${toHex32(v)}\r\n`);
+            }
+            else{
+                switch(i){
+                    case 13:str.push(`SP  = 0x${toHex32(v)}\r\n`);break;
+                    case 14:str.push(`LR  = 0x${toHex32(v)}\r\n`);break;
+                    case 15:str.push(`PC  = 0x${toHex32(v)}\r\n`);break;
+                    case 16:str.push(`xPSR= 0x${toHex32(v)}\r\n`);break;
+                }
+            }
+        }
+        return str.join('');
+    }
+
+    function viewlist32(array){
+        let newline=false;
+        let str=[];
+        for (let i = 0; i < array.length; i++) {
+            if(i!=0&&i%4==0){
+                newline=true;
+            }
+            if(newline){
+                newline=false;
+                str.push(`\r\n`);
+            }
+            str.push(`0x${toHex32(array[i])},`);
+        }
+        return str.join('');
+    }
+
+
+    async function SAVE_ROM(count,addr=0x8000000){
+        let index=0;
+        let vals=new Uint8Array(count);
+        do{
+            let ct=count>=1024?1024:count;
+            let mem=await SWD.readMem32(addr + index,ct).then(e=>u32t8(e));
+            vals.set(mem, index);
+            count-=ct;
+            index+=ct;
+        }while(count);
+        
+        download_uint8(vals,'ROM.bin');
+    }
+
+    var download_device={PY32F002A:downloadbin};
+    var download_selectDevice=download_device['PY32F002A'];
+    var download_info=null;
+    var download_flm=null;
+</script>
+<script>
+    var COM=null;
+    var SWD=null;
+    var output=document.getElementById('outputtext');
+    var wbt=document.getElementById('wdbt');
+    var wrg=document.getElementById('wdrang');
+    var fileInput=document.getElementById('fileInput');
+    var dirselect=document.getElementById('dirselect');
+    var flmlist=document.getElementById('flmselect');
+    var flmupload=document.getElementById('flmupload');
+    var romselect=document.getElementById('romselect');
+    var romfit=document.getElementById('romfit');
+    var startdownload=document.getElementById('startdownload');
+    var rommap={};
+    var romlist={
+        MB0360:'MB0360.js',
+        MB0358:'MB0360.js',
+        MB0220:'MB0360.js',
+    };
+
+
+    function newflm(flmname){
+        let exists = false;
+        for (let i = 0; i < flmlist.options.length; i++) {
+            if (flmlist.options[i].text === flmname) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            let opt = document.createElement('option');
+            opt.text = flmname;
+            flmlist.appendChild(opt);
+        }
+    }
+
+    function setUploadRate(rate){
+        if(rate<0){
+            flmupload.parentElement.style.display = 'none';
+        } else {
+            flmupload.parentElement.style.display = 'flex';
+        }
+        let v=rate*100;
+        flmupload.value = v>flmupload.max?flmupload.max:v;
+    }
+
+
+    function convertToBase64(list) {
+        // Example Uint8Array
+        const uint8Array = new Uint8Array(list);
+        
+        // Convert Uint8Array to Base64
+        const base64String = btoa(String.fromCharCode(...uint8Array));
+        
+        return base64String;
+    }
+
+    function convertToUint8Array(str) {
+        // Get Base64 string from input
+        const base64String = str;
+        
+        // Decode Base64 string to binary string
+        const binaryString = atob(base64String);
+        
+        // Convert binary string to Uint8Array
+        const uint8Array = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            uint8Array[i] = binaryString.charCodeAt(i);
+        }
+        
+        return uint8Array;
+    }
+
+    function loadrom(){
+        romfit.value=romselect.value;
+        startdownload.innerText='加载ROM中...'
+        var script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = 'data/'+romlist[romselect.value];
+        script.onload = ()=>{
+            startdownload.innerText='下载'
+            rommap[romselect.value]=convertToUint8Array(rommap[romselect.value]);
+        };
+        document.head.appendChild(script);
+    }
+
+    function filterSelect() {
+        const filter = romfit.value.toUpperCase();
+        const select = romselect;
+
+        let html='';
+        for (const [k,v] of Object.entries(romlist)) {
+            if(k.includes(filter))
+                html+=`<option>${k}</option>`;
+        }
+        select.innerHTML=html;
+    }
+
+    function detectDevice() {
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        return isMobile;
+    }
+
+    function downloadselect(){
+        if(rommap[romselect.value]){
+            download_selectDevice(rommap[romselect.value]);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        flmlist.addEventListener('change', function() {
+            download_selectDevice = download_device[flmlist.value];
+        });
+
+
+        let sendbtn=document.getElementById('com_open_btn');
+        COM=new BLEUART((h,b)=>{
+            if(h)
+                sendbtn.innerText="断开设备";
+            else
+                sendbtn.innerText="连接设备";
+        })
+        SWD=new UARTSWDDevice(COM);
+        if(detectDevice()){
+            SWD.packetsize=1;
+            startdownload.innerText='高速下载'
+        }
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        
+        let imgfile=async function(file) {
+            if (!file) return;
+            let extension = file.name.split('.').pop().toLowerCase();
+            let reader = new FileReader();
+            reader.onload = function(e) {
+                if (extension === 'hex') {
+                    download_info = {ROM:hex2bin(e.target.result)}
+                }
+                else if (extension === 'bin') {
+                    download_info = Array.from(new Uint8Array(e.target.result));
+                }
+                else if (extension === 'axf') {
+                    download_info = Elfparse(new Uint8Array(e.target.result));
+                }
+                else if (extension === 'flm') {
+                    let info = Elfparse(new Uint8Array(e.target.result));
+                    download_device[file.name]=(bin)=>downloadbin_device(bin,info);
+                    download_info=null;
+                    download_flm=info;
+                    newflm(file.name);
+                }
+                console.log(download_info);
+                
+                download_info && download_info.ROM && (download_info.ROM.length>0) && download_selectDevice && download_selectDevice(download_info.ROM);
+            };
+            if (extension === 'hex') {
+                reader.readAsText(file);
+            } else {
+                reader.readAsArrayBuffer(file);
+            }
+        }
+        
+        document.addEventListener('dragover', function(e) {
+            e.preventDefault();
+        });
+
+        document.addEventListener('paste', function(e) {
+            e.preventDefault();
+            const items = e.clipboardData.items;
+            if (!items || items.length === 0) return;
+            const item = items[0];
+            if (item.kind === 'file') {
+                const file = item.getAsFile();
+                imgfile(file);
+            }
+        });
+
+        document.addEventListener('drop', function(e) {
+            e.preventDefault();
+            const file = e.dataTransfer.files[0];
+            imgfile(file);
+        });
+
+        fileInput.onchange=e=>{
+            const file = e.target.files[0];
+            imgfile(file);
+        }
     });
-    var SWD=new UARTSWDDevice(COM);
-
-    function openble(){
-        if(COM.connected)
-            COM.close();
-        else
-            COM.open();
+</script>
+<script>
+    function floatball(path='interface.jpg'){
+        const css=`.floating-ball {
+            width: 40px;
+            height: 40px;
+            background-color: #fff1;
+            border-radius: 50%;
+            position: fixed;
+            top: 30px;
+            right: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.3s ease;
+            cursor: pointer;
+        }
+        .floating-ball:hover {
+            transform: scale(1.2);
+        }`;
+        let style = document.createElement('style');
+        style.type = 'text/css';
+        style.innerHTML=css;
+        document.getElementsByTagName('head')[0].appendChild(style);
+        let div=document.createElement('div');
+        div.classList.add('floating-ball');
+        div.innerHTML=`🔌`;
+        div.onclick=async ()=>{
+            await SWD.connect();
+            if(SWD.coreID==197203063){
+                div.style.backgroundColor='#0f07';
+                setTimeout(() => {
+                    div.style.backgroundColor='#fff1';
+                }, 1500);
+            }
+        }
+        document.body.append(div)
     }
-
-    async function runtime(call) {
-        const startTime = performance.now();
-        await call();
-        const endTime = performance.now();
-        const executionTime = endTime - startTime;
-        output.innerText+=(`Promise executed in ${executionTime.toFixed(2)} milliseconds\r\n`);
-    }
-
-    async function testswd() {
-        SWD.packetsize=maxpacket.value|0;
-        output.innerText='';
-        await runtime(async()=>{return SWD.connect()});
-        output.innerText+=`coreID:${Hex32(SWD.coreID)}\r\n`;
-        await runtime(async()=>{return SWD.softReset()});
-        output.innerText+=`isHalt:${Hex32(await SWD.isHalt())}\r\n`;
-        await runtime(async()=>{return output.innerText+=(await SWD.viewregs())});
-        output.innerText+=`write 1K Data\r\n`;
-        let b=[];for(let i=0;i<1024;i++)b.push(i&0xff);
-        await runtime(async()=>{return SWD.writeMem32(0x20000000,b)});
-        output.innerText+=`read 1K Data\r\n`;
-        await runtime(async()=>{output.innerText+=(viewhex(u32t8(await SWD.readMem32(0x20000000,1024))))+'\r\n'})
-    }
-
-
+    floatball();
 </script>
 </html>
