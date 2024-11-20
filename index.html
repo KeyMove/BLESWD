@@ -636,6 +636,8 @@
         }
         close(){
             try{
+                this.connected=false;
+                this.OnstatusChange(this,false);
                 this.device.gatt.disconnect();
             }catch(error){
                 log(`error:${error.toString()}`);
@@ -1445,7 +1447,7 @@
 
         let sendbtn=document.getElementById('com_open_btn');
         COM=new BLEUART((h,b)=>{
-            if(h)
+            if(b)
                 sendbtn.innerText="断开设备";
             else
                 sendbtn.innerText="连接设备";
