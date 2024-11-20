@@ -128,7 +128,8 @@
                     if(entry[1].kind==='file'){
                         let index=entry[0].lastIndexOf('.');
                         let fname=index<0?entry[0]:entry[0].substring(0,index);
-                        allfile[path+entry[0]]={name:entry[0],_name:fname,dir:handle,file:entry[1],path:path};
+                        let extname=index<0?null:entry[0].substring(index);
+                        allfile[path+entry[0]]={name:entry[0],_name:fname,ext:extname,dir:handle,file:entry[1],path:path};
                     }
                     else{
                         //allfile[0].push({name:entry[0],dir:handle,file:entry[1]});
@@ -146,6 +147,36 @@
             console.error(err);
         }
     }
+
+    function fitfile(f,ext){
+        let tab={};
+        for(let [k,v] of Object.entries(f)){ 
+            if(v.ext==ext){
+                tab[k]=v;
+            }
+        }
+        return tab;
+    }
+
+    function createFolder(directoryHandle, folderName) {
+        return new Promise((resolve, reject) => {
+            directoryHandle.getDirectoryHandle(folderName, { create: true })
+                .then(folderHandle => {
+                    resolve(folderHandle);
+                })
+                .catch(error => {
+                    reject(error);
+                });
+        });
+    }
+
+    async function createfile(name,value,dir){
+        let fileHandle = await dir.getFileHandle(name,{ create: true })
+        .then(e=>e.createWritable())
+        .then(e=>{e.write(new Blob([value], { type: 'text/plain' }));return e.close()});
+    }
+
+
     async function checkFileUpdate(fileHandle) {
         try {
             const file = await fileHandle.getFile();
@@ -1297,9 +1328,6 @@
     var startdownload=document.getElementById('startdownload');
     var rommap={};
     var romlist={
-        MB0360:'1.js',
-        MB0358:'1.js',
-        MB0220:'1.js',
     };
 
 
@@ -1355,12 +1383,22 @@
         return uint8Array;
     }
 
+
+    function loadjs(url,callback=()=>{}){
+        var script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = url;
+        script.onload = callback;
+        document.head.appendChild(script);
+    }
+
     function loadrom(){
         romfit.value=romselect.value;
+        if(rommap[romselect.value])return;
         startdownload.innerText='加载ROM中...'
         var script = document.createElement('script');
         script.type = 'text/javascript';
-        script.src = 'data/'+romlist[romselect.value];
+        script.src = romlist[romselect.value];
         script.onload = ()=>{
             startdownload.innerText='下载'
             rommap[romselect.value]=convertToUint8Array(rommap[romselect.value]);
@@ -1392,6 +1430,14 @@
     }
 
     document.addEventListener('DOMContentLoaded', function() {
+        
+        setTimeout(() => {
+            loadjs('data/list.js',()=>{
+                romfit.value='';
+                romfit.dispatchEvent(new Event('input',{bubbles:true,cancelable:true}));
+            });
+        }, 500);
+        
         flmlist.addEventListener('change', function() {
             download_selectDevice = download_device[flmlist.value];
         });
@@ -1510,5 +1556,57 @@
         document.body.append(div)
     }
     floatball();
+</script>
+<script>
+    function getBin(file) {
+        return new Promise((resolve, reject) => {
+            if (!file) reject();
+            let extension = file.name.split('.').pop().toLowerCase();
+            let reader = new FileReader();
+            reader.onload = function(e) {
+                let rom;
+                if (extension === 'hex') {
+                    rom = {ROM:hex2bin(e.target.result)}
+                }
+                else if (extension === 'bin') {
+                    rom = Array.from(new Uint8Array(e.target.result));
+                }
+                else if (extension === 'axf') {
+                    rom = Elfparse(new Uint8Array(e.target.result));
+                }
+                resolve(rom.ROM);
+            };
+            reader.onerror = reject;
+            if (extension === 'hex') {
+                reader.readAsText(file);
+            } else {
+                reader.readAsArrayBuffer(file);
+            }
+        });
+    }
+    async function buildROMjs(beforurl='data'){
+        let tasks=[];
+        let f = await showDirectoryStructure();
+        let roms=fitfile(f,'.axf');
+        let count=1;
+        let setinfo=[];
+        let dir=f['output'];
+        if(!f['output']){
+            dir=await createFolder(f['/'],'output');
+        }
+        for (let [k,v] of Object.entries(roms)) {
+            let name=`${count}.js`;
+            let kn=k.substring(0,k.indexOf('/')).replace('testPY32 ','');
+            setinfo.push(`romlist['${kn}']='${beforurl}/${name}';\r\n`);
+            let p=v.file.getFile()
+            .then(e=>getBin(e))
+            .then(e=>convertToBase64(e))
+            .then(e=>createfile(name,new TextEncoder().encode(`rommap['${kn}']='${e}';`),dir))
+            tasks.push(p);
+            count+=1;
+        }
+        await createfile('list.js',new TextEncoder().encode(setinfo.join('')),dir);
+        await Promise.all(tasks);
+    }
 </script>
 </html>
