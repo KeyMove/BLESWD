@@ -1418,6 +1418,7 @@
                 html+=`<option>${k}</option>`;
         }
         select.innerHTML=html;
+        select.selectedIndex=-1;
     }
 
     function detectDevice() {
